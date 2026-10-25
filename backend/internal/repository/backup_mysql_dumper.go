@@ -65,6 +65,50 @@ func acquireMySQLBackupLock(ctx context.Context, db *sql.DB) (*sql.Conn, func() 
 	return conn, release, nil
 }
 
+// mysqlDumpArgs 构造 mysqldump 的参数。
+func mysqlDumpArgs(cfg *config.DatabaseConfig) []string {
+	args := []string{
+		"--host=" + cfg.Host,
+		"--port=" + fmt.Sprintf("%d", cfg.Port),
+		"--user=" + cfg.User,
+		cfg.DBName,
+		// --single-transaction：InnoDB 一致性快照，不锁表（与 pg_dump 的快照语义对齐）。
+		"--single-transaction",
+		// 导出包含 DROP TABLE IF EXISTS，恢复时可覆盖已有对象（对齐 pg_dump --clean --if-exists）。
+		"--add-drop-table",
+		// 触发器随表导出。mysqldump 没有去掉 DEFINER 的选项（--skip-definer 属于
+		// MySQL Shell，不是 mysqldump 的参数），导出内容里的 DEFINER 即执行备份的
+		// 账号；跨实例恢复时需先创建同名账号。
+		"--triggers",
+		// 应用账号通常没有 PROCESS 权限，不导表空间可避免 mysqldump 报
+		// "Access denied ... PROCESS privilege(s) ... tablespaces"。
+		"--no-tablespaces",
+		// 不导出事件/存储过程（项目 schema 未使用；避免 DEFINER 依赖）。
+		"--skip-events",
+		"--routines=false",
+	}
+	return appendMySQLTLSArg(args, cfg)
+}
+
+// mysqlRestoreArgs 构造 mysql 客户端（恢复）的参数。
+func mysqlRestoreArgs(cfg *config.DatabaseConfig) []string {
+	return appendMySQLTLSArg([]string{
+		"--host=" + cfg.Host,
+		"--port=" + fmt.Sprintf("%d", cfg.Port),
+		"--user=" + cfg.User,
+		cfg.DBName,
+	}, cfg)
+}
+
+// appendMySQLTLSArg 让备份/恢复沿用 database.sslmode 对应的加密档位，
+// 否则应用走 TLS 而 mysqldump/mysql 走服务器默认，两者行为不一致。
+func appendMySQLTLSArg(args []string, cfg *config.DatabaseConfig) []string {
+	if sslMode, ok := config.MySQLClientTLSMode(cfg.SSLMode); ok {
+		return append(args, "--ssl-mode="+sslMode)
+	}
+	return args
+}
+
 // Dump executes mysqldump and returns a streaming reader of the output.
 func (d *MySQLDumper) Dump(ctx context.Context) (io.ReadCloser, error) {
 	if d.db == nil {
@@ -75,22 +119,7 @@ func (d *MySQLDumper) Dump(ctx context.Context) (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	args := []string{
-		"--host=" + d.cfg.Host,
-		"--port=" + fmt.Sprintf("%d", d.cfg.Port),
-		"--user=" + d.cfg.User,
-		d.cfg.DBName,
-		// --single-transaction：InnoDB 一致性快照，不锁表（与 pg_dump 的快照语义对齐）。
-		"--single-transaction",
-		// 导出包含 DROP TABLE IF EXISTS，恢复时可覆盖已有对象（对齐 pg_dump --clean --if-exists）。
-		"--add-drop-table",
-		// 触发器随表导出；不导出 DEFINER（避免恢复到无对应用户的实例时失败）。
-		"--triggers",
-		"--skip-definer",
-		// 不导出事件/存储过程（项目 schema 未使用；避免 DEFINER 依赖）。
-		"--skip-events",
-		"--routines=false",
-	}
+	args := mysqlDumpArgs(d.cfg)
 
 	commandContext := d.commandContext
 	if commandContext == nil {
@@ -116,12 +145,7 @@ func (d *MySQLDumper) Dump(ctx context.Context) (io.ReadCloser, error) {
 
 // Restore executes the mysql client to restore from a streaming reader.
 func (d *MySQLDumper) Restore(ctx context.Context, data io.Reader) error {
-	args := []string{
-		"--host=" + d.cfg.Host,
-		"--port=" + fmt.Sprintf("%d", d.cfg.Port),
-		"--user=" + d.cfg.User,
-		d.cfg.DBName,
-	}
+	args := mysqlRestoreArgs(d.cfg)
 
 	cmd := exec.CommandContext(ctx, "mysql", args...)
 	if d.cfg.Password != "" {
