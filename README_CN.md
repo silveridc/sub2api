@@ -586,11 +586,18 @@ database:
   user: sub2api
   password: your-password
   dbname: sub2api
+  sslmode: "prefer"    # 与 PostgreSQL 共用字段，MySQL 下按 TLS 档位解释
 ```
 
 MySQL 模式注意事项：
 
 - 需要 MySQL 8.0.13 及以上（推荐 8.0.30+）。
+- `database.sslmode` 在 MySQL 下表示 TLS 档位（未显式配置时为默认值 `prefer`）：
+  - `disable` / `false`：明文连接。
+  - `prefer` / `preferred`：服务器支持 TLS 则加密，否则回退明文。
+  - `require` / `skip-verify`：强制加密但不校验服务器证书——MySQL 8 自带的自签证书用这一档。
+  - `verify-ca` / `verify-full` / `true`：加密并校验证书链与主机名，需先把服务器 CA 装入系统信任库，否则报 `x509: certificate signed by unknown authority`。
+  - 备份/恢复（`mysqldump` / `mysql`）通过 `--ssl-mode` 沿用同一档位。
 - 在启用 binlog 的服务器上，需要 DBA 预先执行 `SET GLOBAL log_bin_trust_function_creators = 1`（或为应用账号授予 SUPER / SET_ANY_DEFINER 权限），否则触发器创建会失败。
 - 备份使用 mysqldump / mysql 客户端工具。
 - 仅支持全新安装，不提供 PostgreSQL → MySQL 数据迁移工具。

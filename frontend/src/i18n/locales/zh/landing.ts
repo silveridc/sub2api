@@ -200,7 +200,7 @@ export default {
       driver: '数据库类型',
       driverPostgres: 'PostgreSQL',
       driverMysql: 'MySQL',
-      mysqlNote: 'MySQL 不使用 SSL 模式，相关选项已隐藏。',
+      mysqlNote: '需要 MySQL 8.0.13 及以上。TLS 模式下「要求」只加密连接、不校验服务器证书（含自签证书）；需要校验证书请选「验证 CA」或「完全验证」。',
       host: '主机',
       port: '端口',
       username: '用户名',
@@ -210,6 +210,7 @@ export default {
       passwordPlaceholder: '密码',
       ssl: {
         disable: '禁用',
+        preferred: '优先（不支持时回退明文）',
         require: '要求',
         verifyCa: '验证 CA',
         verifyFull: '完全验证'

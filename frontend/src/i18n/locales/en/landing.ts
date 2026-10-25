@@ -200,7 +200,7 @@ export default {
       driver: 'Database Type',
       driverPostgres: 'PostgreSQL',
       driverMysql: 'MySQL',
-      mysqlNote: 'MySQL does not use SSL mode, so the SSL mode option is hidden.',
+      mysqlNote: 'Requires MySQL 8.0.13+. In TLS mode, "Require" encrypts the connection without verifying the server certificate (self-signed included); pick "Verify CA" / "Verify Full" to validate it.',
       host: 'Host',
       port: 'Port',
       username: 'Username',
@@ -210,6 +210,7 @@ export default {
       passwordPlaceholder: 'Password',
       ssl: {
         disable: 'Disable',
+        preferred: 'Preferred (fall back to plaintext)',
         require: 'Require',
         verifyCa: 'Verify CA',
         verifyFull: 'Verify Full'

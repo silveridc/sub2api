@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/sysutil"
 
@@ -124,6 +125,27 @@ func validateSSLMode(mode string) bool {
 	return validModes[mode]
 }
 
+// isMySQLDriver 报告请求里的驱动是否为 MySQL。
+func isMySQLDriver(driver string) bool {
+	return strings.EqualFold(strings.TrimSpace(driver), "mysql")
+}
+
+// checkSSLMode 按驱动校验 sslmode：MySQL 下它是 TLS 语义
+// （disable/preferred/require/verify-*，取值集合见 config.NormalizeMySQLTLSMode），
+// PostgreSQL 下沿用 libpq 取值集合。
+func checkSSLMode(driver, mode string) (bool, string) {
+	if !isMySQLDriver(driver) {
+		if validateSSLMode(mode) {
+			return true, ""
+		}
+		return false, "Invalid SSL mode"
+	}
+	if _, valid := config.NormalizeMySQLTLSMode(mode); valid {
+		return true, ""
+	}
+	return false, "Invalid TLS mode for mysql. Use: " + strings.Join(config.ValidMySQLTLSModes(), ", ")
+}
+
 // TestDatabaseRequest represents database test request
 type TestDatabaseRequest struct {
 	Driver   string `json:"driver"`
@@ -164,9 +186,8 @@ func testDatabase(c *gin.Context) {
 	if req.SSLMode == "" {
 		req.SSLMode = "disable"
 	}
-	// sslmode 为 PostgreSQL 专属参数；MySQL 向导不使用该字段。
-	if !strings.EqualFold(strings.TrimSpace(req.Driver), "mysql") && !validateSSLMode(req.SSLMode) {
-		response.Error(c, http.StatusBadRequest, "Invalid SSL mode")
+	if ok, msg := checkSSLMode(req.Driver, req.SSLMode); !ok {
+		response.Error(c, http.StatusBadRequest, msg)
 		return
 	}
 
@@ -332,8 +353,10 @@ func install(c *gin.Context) {
 	if req.Database.SSLMode == "" {
 		req.Database.SSLMode = "disable"
 	}
-	if !validateSSLMode(req.Database.SSLMode) {
-		response.Error(c, http.StatusBadRequest, "Invalid SSL mode")
+	// 与 test-db 用同一套驱动感知的取值校验，否则向导最后一步会拒绝
+	// 连接测试已放行的 TLS 取值（如 MySQL 的 preferred / skip-verify）。
+	if ok, msg := checkSSLMode(req.Database.Driver, req.Database.SSLMode); !ok {
+		response.Error(c, http.StatusBadRequest, msg)
 		return
 	}
 	if req.Server.Host == "" {

@@ -549,11 +549,18 @@ database:
   user: sub2api
   password: your-password
   dbname: sub2api
+  sslmode: "prefer"    # PostgreSQL と共用。MySQL では TLS の強度指定として解釈
 ```
 
 MySQL モードの注意事項:
 
 - MySQL 8.0.13 以降が必要です（8.0.30+ 推奨）。
+- `database.sslmode` は MySQL では TLS の強度指定を表します（未設定ならデフォルトの `prefer`）:
+  - `disable` / `false`: 平文接続。
+  - `prefer` / `preferred`: サーバーが TLS に対応すれば暗号化し、そうでなければ平文にフォールバック。
+  - `require` / `skip-verify`: 暗号化は必須ですがサーバー証明書の検証は行いません——MySQL 8 同梱の自己署名証明書はこちらを使います。
+  - `verify-ca` / `verify-full` / `true`: 証明書チェーンとホスト名を検証します。サーバーの CA を OS の信頼ストアに導入しないと `x509: certificate signed by unknown authority` で接続に失敗します。
+  - バックアップ / 復元（`mysqldump` / `mysql`）は `--ssl-mode` で同じ段階を引き継ぎます。
 - バイナリログ（binlog）が有効なサーバーでは、事前に DBA が `SET GLOBAL log_bin_trust_function_creators = 1` を実行する（またはアプリケーションアカウントに SUPER / SET_ANY_DEFINER 権限を付与する）必要があります。実行しない場合、トリガーの作成に失敗します。
 - バックアップには mysqldump / mysql クライアントツールを使用します。
 - 新規インストールのみ対応しており、PostgreSQL → MySQL のデータ移行ツールは提供されません。

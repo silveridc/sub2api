@@ -875,6 +875,13 @@ database:
   # SSL mode: disable, prefer, require, verify-ca, verify-full
   # SSL 模式：disable（禁用）, prefer（优先加密，默认）, require（要求）, verify-ca（验证CA）, verify-full（完全验证）
   # 默认值为 "prefer"，数据库支持 SSL 时自动使用加密连接，不支持时回退明文
+  # driver: mysql 时同一字段按 MySQL TLS 语义解释（取值集合与 libpq 合并兼容）：
+  #   disable / false                     → 明文
+  #   prefer / preferred                  → 服务器支持 TLS 则加密，否则回退明文
+  #   require / skip-verify               → 强制加密、不校验证书（MySQL 8 自带自签证书用这一档）
+  #   verify-ca / verify-full / true      → 加密并校验证书与主机名（需把服务器 CA 装入系统信任库，
+  #                                         否则报 x509: certificate signed by unknown authority）
+  # 备份/恢复（mysqldump / mysql）经 --ssl-mode 沿用同一档位。
   sslmode: "prefer"
   # Max open connections (高并发场景建议 256+，需配合 PostgreSQL max_connections 调整)
   # 最大打开连接数

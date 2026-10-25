@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"golang.org/x/term"
 )
 
@@ -112,9 +113,15 @@ func RunCLI() error {
 	}
 
 	if isMySQL {
-		// MySQL 无 sslmode 概念（TLS 由驱动参数/服务器配置决定），
-		// 置空使双方言连接构造走 MySQL 分支。
-		cfg.Database.SSLMode = ""
+		// MySQL 下 sslmode 字段承载 TLS 语义（取值→驱动 TLSConfig 的映射
+		// 见 config.NormalizeMySQLTLSMode，与 Web 向导、config 校验共用一套）。
+		for {
+			cfg.Database.SSLMode = promptString(reader, "TLS Mode (disable/preferred/require/verify-ca/verify-full)", "disable")
+			if _, valid := config.NormalizeMySQLTLSMode(cfg.Database.SSLMode); valid {
+				break
+			}
+			fmt.Println("  Invalid TLS mode. Use: disable, preferred, require, verify-ca or verify-full.")
+		}
 	} else {
 		for {
 			cfg.Database.SSLMode = promptString(reader, "SSL Mode", "disable")

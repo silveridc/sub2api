@@ -1665,10 +1665,89 @@ func (d *DatabaseConfig) MySQLConfig(tz string) (*mysql.Config, error) {
 		Params: map[string]string{
 			"time_zone": "'" + mysqlSessionTimeZone(loc) + "'",
 		},
+		// TLS：sslmode 字段在 MySQL 下按 MySQL 语义解释（见 MySQLTLSMode）。
+		TLSConfig: d.MySQLTLSMode(),
 		// 迁移执行器将整个 SQL 迁移文件作为单次 Exec 提交（与 lib/pq 行为对齐），
 		// 需要驱动允许单条 Exec 携带多条语句。
 		MultiStatements: true,
 	}, nil
+}
+
+// MySQLTLSMode 将 sslmode 字段归一为 go-sql-driver 的 TLSConfig 取值。
+func (d *DatabaseConfig) MySQLTLSMode() string {
+	mode, _ := NormalizeMySQLTLSMode(d.SSLMode)
+	return mode
+}
+
+// NormalizeMySQLTLSMode 把 sslmode 字段映射为 go-sql-driver 的 TLSConfig 取值，
+// 第二个返回值表示该取值是否合法。
+//
+// sslmode 是 PostgreSQL / MySQL 共用的字段，取值集合不重定义一套 MySQL 专有词，
+// 而是把 libpq 惯用词和 MySQL 原生词按加密强度归到同一阶梯上：
+//   - "" / disable / false            → 明文
+//   - prefer / preferred              → 优先 TLS，服务器不支持时回退明文
+//   - require / skip-verify           → 必须加密，不校验服务器证书（对齐 PG require
+//     语义；MySQL 8 自签证书场景用这个）
+//   - verify-ca / verify-full / true  → 校验证书且要求匹配主机名（go-sql-driver
+//     不区分 verify-ca 与 verify-full，统一为完整校验）
+//
+// prefer 必须在接受集合内：它是 database.sslmode 的 viper 默认值，也是
+// deploy/config.example.yaml 里的示例值，MySQL 配置常常不显式写这一项。
+func NormalizeMySQLTLSMode(sslmode string) (string, bool) {
+	sslmode = strings.ToLower(strings.TrimSpace(sslmode))
+	for _, entry := range mysqlTLSModeTable {
+		for _, candidate := range entry.modes {
+			if candidate == sslmode {
+				return entry.tls, true
+			}
+		}
+	}
+	return "", false
+}
+
+// MySQLClientTLSMode 返回与 MySQLTLSMode 加密级别等价的 MySQL 客户端工具
+// （mysqldump / mysql）--ssl-mode 取值，使备份/恢复与应用连接同一档 TLS。
+// 第二个返回值表示 sslmode 是否合法。
+func MySQLClientTLSMode(sslmode string) (string, bool) {
+	tls, ok := NormalizeMySQLTLSMode(sslmode)
+	if !ok {
+		return "", false
+	}
+	switch tls {
+	case "":
+		return "DISABLED", true
+	case "preferred":
+		return "PREFERRED", true
+	case "skip-verify":
+		return "REQUIRED", true
+	default:
+		return "VERIFY_IDENTITY", true
+	}
+}
+
+// ValidMySQLTLSModes 返回 MySQL 驱动下 sslmode 的合法取值（不含空值），用于错误提示。
+func ValidMySQLTLSModes() []string {
+	var modes []string
+	for _, entry := range mysqlTLSModeTable {
+		for _, candidate := range entry.modes {
+			if candidate != "" {
+				modes = append(modes, candidate)
+			}
+		}
+	}
+	return modes
+}
+
+// mysqlTLSModeTable 是 sslmode → TLSConfig 映射的唯一事实源：映射与合法取值
+// 列表都由它派生，避免两处各自维护导致「能过校验却被静默降级成明文」。
+var mysqlTLSModeTable = []struct {
+	modes []string
+	tls   string
+}{
+	{modes: []string{"", "disable", "false"}, tls: ""},
+	{modes: []string{"prefer", "preferred"}, tls: "preferred"},
+	{modes: []string{"require", "skip-verify"}, tls: "skip-verify"},
+	{modes: []string{"verify-ca", "verify-full", "true"}, tls: "true"},
 }
 
 // MySQLDSN 返回 MySQL 连接字符串（含时区会话配置）。
@@ -3220,6 +3299,12 @@ func (c *Config) Validate() error {
 	case "", "postgres", "postgresql", "mysql":
 	default:
 		return fmt.Errorf("database.driver must be one of: postgres, mysql")
+	}
+	if c.Database.IsMySQL() {
+		if _, ok := NormalizeMySQLTLSMode(c.Database.SSLMode); !ok {
+			return fmt.Errorf("database.sslmode %q is not valid for the mysql driver, must be one of: %s",
+				c.Database.SSLMode, strings.Join(ValidMySQLTLSModes(), ", "))
+		}
 	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")

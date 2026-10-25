@@ -161,16 +161,11 @@
                 placeholder="sub2api"
               />
             </div>
-            <div v-if="!isMysql">
+            <div>
               <label class="input-label">{{ t('setup.database.sslMode') }}</label>
               <Select
                 v-model="formData.database.sslmode"
-                :options="[
-                  { value: 'disable', label: t('setup.database.ssl.disable') },
-                  { value: 'require', label: t('setup.database.ssl.require') },
-                  { value: 'verify-ca', label: t('setup.database.ssl.verifyCa') },
-                  { value: 'verify-full', label: t('setup.database.ssl.verifyFull') }
-                ]"
+                :options="sslModeOptions"
               />
             </div>
           </div>
@@ -601,18 +596,29 @@ type DbDriver = 'postgres' | 'mysql'
 
 const dbDriverDefaults: Record<DbDriver, { port: number; user: string; sslmode: string }> = {
   postgres: { port: 5432, user: 'postgres', sslmode: 'disable' },
-  mysql: { port: 3306, user: 'root', sslmode: '' }
+  mysql: { port: 3306, user: 'root', sslmode: 'disable' }
 }
 
 const isMysql = computed(() => formData.database.driver === 'mysql')
+
+// sslmode 是双方言共用字段：MySQL 驱动下它承载 TLS 语义，取值集合与
+// backend/internal/config 的 NormalizeMySQLTLSMode 保持一致（多一档 preferred，
+// 没有 PG 的 allow/prefer 之分）。
+const sslModeOptions = computed(() => [
+  { value: 'disable', label: t('setup.database.ssl.disable') },
+  ...(isMysql.value ? [{ value: 'preferred', label: t('setup.database.ssl.preferred') }] : []),
+  { value: 'require', label: t('setup.database.ssl.require') },
+  { value: 'verify-ca', label: t('setup.database.ssl.verifyCa') },
+  { value: 'verify-full', label: t('setup.database.ssl.verifyFull') }
+])
 
 const activeDbDefaults = computed(() => dbDriverDefaults[isMysql.value ? 'mysql' : 'postgres'])
 const portPlaceholder = computed(() => String(activeDbDefaults.value.port))
 const userPlaceholder = computed(() => activeDbDefaults.value.user)
 
-// When switching drivers, swap driver-specific defaults (port / username),
-// clear fields that do not apply (sslmode is PostgreSQL-only) and reset the
-// connection test state so the user re-tests against the new driver.
+// When switching drivers, swap driver-specific defaults (port / username /
+// sslmode) and reset the connection test state so the user re-tests against
+// the new driver.
 watch(
   () => formData.database.driver,
   (driver, previous) => {
@@ -628,7 +634,8 @@ watch(
     if (!formData.database.user || formData.database.user === prev.user) {
       formData.database.user = next.user
     }
-    // sslmode only applies to PostgreSQL; clear it for MySQL
+    // The two drivers share the field but not its whole value set (MySQL has
+    // "preferred", which libpq rejects), so re-apply the target driver's default.
     formData.database.sslmode = next.sslmode
 
     dbConnected.value = false

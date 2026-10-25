@@ -549,11 +549,18 @@ database:
   user: sub2api
   password: your-password
   dbname: sub2api
+  sslmode: "prefer"    # shared with PostgreSQL; read as the MySQL TLS level
 ```
 
 Notes for MySQL mode:
 
 - Requires MySQL 8.0.13 or later (8.0.30+ recommended).
+- `database.sslmode` sets the TLS level under MySQL (defaulting to `prefer` when unset):
+  - `disable` / `false`: plaintext connection.
+  - `prefer` / `preferred`: encrypt when the server supports TLS, otherwise fall back to plaintext.
+  - `require` / `skip-verify`: always encrypt, do not verify the server certificate — use this with MySQL 8's built-in self-signed certificate.
+  - `verify-ca` / `verify-full` / `true`: encrypt and verify the certificate chain and hostname; the server CA must be installed in the OS trust store, otherwise the connection fails with `x509: certificate signed by unknown authority`.
+  - Backups (`mysqldump` / `mysql`) inherit the same level through `--ssl-mode`.
 - On servers with binary logging (binlog) enabled, a DBA must run `SET GLOBAL log_bin_trust_function_creators = 1` beforehand (or grant the application account SUPER / SET_ANY_DEFINER privileges); otherwise trigger creation fails.
 - Backups use the `mysqldump` / `mysql` client tools.
 - Fresh installations only; no PostgreSQL → MySQL data migration tool is provided.
