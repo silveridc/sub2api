@@ -47,6 +47,9 @@ func (r *accountRepository) ScopedAdminList(ctx context.Context, p pagination.Pa
 	err = q.Offset(p.Offset()).Limit(p.Limit()).Order(dbaccount.ByID()).
 		Select(dbaccount.FieldID, dbaccount.FieldName, dbaccount.FieldNotes, dbaccount.FieldPlatform, dbaccount.FieldType, dbaccount.FieldStatus, dbaccount.FieldSchedulable, dbaccount.FieldConcurrency, dbaccount.FieldPriority).
 		Aggregate(func(s *entsql.Selector) string {
+			if IsMySQL() {
+				return "JSON_EXTRACT(" + s.C(dbaccount.FieldCredentials) + ", '$.model_mapping') AS model_mapping"
+			}
 			return s.C(dbaccount.FieldCredentials) + "->'model_mapping' AS model_mapping"
 		}).Scan(ctx, &rows)
 	if err != nil {
@@ -177,6 +180,9 @@ func (r *accountRepository) ScopedAdminCodexCandidates(ctx context.Context, iden
 			Where(dbaccount.Or(scope...), match).Order(dbaccount.ByID(entsql.OrderDesc())).Limit(1).
 			Select(dbaccount.FieldID).Aggregate(func(s *entsql.Selector) string {
 			c := s.C(dbaccount.FieldCredentials)
+			if IsMySQL() {
+				return "JSON_OBJECT('chatgpt_account_id', JSON_EXTRACT(" + c + ", '$.chatgpt_account_id'), 'chatgpt_user_id', JSON_EXTRACT(" + c + ", '$.chatgpt_user_id'), 'email', JSON_EXTRACT(" + c + ", '$.email'), 'access_token', JSON_EXTRACT(" + c + ", '$.access_token')) AS credentials"
+			}
 			return "jsonb_build_object('chatgpt_account_id', " + c + "->'chatgpt_account_id', 'chatgpt_user_id', " + c + "->'chatgpt_user_id', 'email', " + c + "->'email', 'access_token', " + c + "->'access_token') AS credentials"
 		}).Scan(ctx, &rows)
 		if err != nil {
@@ -202,6 +208,9 @@ func scopedCodexIdentityPredicates(identity service.ScopedCodexIdentity) []dbpre
 	const whitespace = "\t\n\v\f\r \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
 	field := func(key string) string {
 		// 字段名均为下方固定常量；非法 JSON 类型按导入器规则视为空值。
+		if IsMySQL() {
+			return mysqlScopedCredentialField(key)
+		}
 		raw := `"accounts"."credentials"->'` + key + `'`
 		value := `"accounts"."credentials"->>'` + key + `'`
 		// 旧 JSON 数值经 Go 解码为 float64：保留同样的精度，展开指数并去掉尾随小数零。
@@ -244,4 +253,29 @@ func scopedCodexIdentityPredicates(identity service.ScopedCodexIdentity) []dbpre
 		}
 	}
 	return predicates
+}
+
+// mysqlScopedCredentialWhitespace 对齐 Go strings.TrimSpace / PG btrim 使用的空白集合：
+// [[:space:]] 覆盖 ASCII 空白，其余按码点列出。反斜杠必须写两遍：SQL 词法会吃掉
+// 未识别转义序列的前导反斜杠（单层 \x{2000} 会退化成字面 x{2000}，把 ICU 字符集
+// 变成非法的 `}-x` 范围并抛 ER_REGEXP_INVALID_RANGE 3697），剩下的单层才是 ICU 语法。
+const mysqlScopedCredentialWhitespace = `[[:space:]\\x{0085}\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}]`
+
+// mysqlScopedCredentialField 是 PG 版凭证取值表达式的 MySQL 等价实现：
+//   - ->'k' / ->>'k' → JSON_EXTRACT / JSON_UNQUOTE(JSON_EXTRACT)；
+//   - jsonb_typeof → JSON_TYPE（大写枚举，number 细分为 INTEGER/DOUBLE/DECIMAL）；
+//   - trim_scale(((v)::double precision)::text::numeric)::text →
+//     CAST(CAST(v AS DOUBLE) AS DECIMAL(65,30)) 再裁掉尾随 0 与小数点
+//     （实测逐值一致：1.0→1、1e7→10000000、18 位整数按 float64 精度展开成 123456789012345680）；
+//   - btrim(x, <空白集合>) → REGEXP_REPLACE 裁剪首尾同类字符集（MySQL 无按字符集合的 TRIM）。
+//
+// 已知语义差：JSON 数值超出 DECIMAL(65,30) 可表示范围时取值为 NULL（PG 保留原值），
+// 该情况只会让匹配落空；账户标识不可能是这种量级，按不命中处理。
+func mysqlScopedCredentialField(key string) string {
+	raw := "JSON_EXTRACT(`accounts`.`credentials`, '$." + key + "')"
+	value := "JSON_UNQUOTE(" + raw + ")"
+	number := "TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST(CAST(" + value + " AS DOUBLE) AS DECIMAL(65,30))))"
+	return "REGEXP_REPLACE(CASE WHEN JSON_TYPE(" + raw + ") = 'STRING' THEN " + value +
+		" WHEN JSON_TYPE(" + raw + ") IN ('INTEGER', 'DOUBLE', 'DECIMAL') THEN " + number +
+		" ELSE '' END, '^" + mysqlScopedCredentialWhitespace + "+|" + mysqlScopedCredentialWhitespace + "+$', '')"
 }

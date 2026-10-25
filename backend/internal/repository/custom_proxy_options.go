@@ -44,7 +44,7 @@ func (r *proxyRepository) SampleOptions(ctx context.Context, search string) ([]s
 		return nil, 0, err
 	}
 	records, err := q.Select(proxy.FieldID, proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldPort, proxy.FieldStatus, proxy.FieldExpiresAt).
-		Order(func(s *entsql.Selector) { s.OrderExpr(entsql.Expr("RANDOM()")) }).Limit(50).All(ctx)
+		Order(func(s *entsql.Selector) { s.OrderExpr(entsql.Expr(randomOrderExpr())) }).Limit(50).All(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -53,4 +53,12 @@ func (r *proxyRepository) SampleOptions(ctx context.Context, search string) ([]s
 		items = append(items, *proxyEntityToService(record))
 	}
 	return items, int64(total), nil
+}
+
+// randomOrderExpr 返回当前方言的随机排序表达式：PostgreSQL RANDOM()、MySQL RAND()。
+func randomOrderExpr() string {
+	if IsMySQL() {
+		return "RAND()"
+	}
+	return "RANDOM()"
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"entgo.io/ent/dialect"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
@@ -290,10 +291,15 @@ func (s *adminServiceImpl) scopedAdminTransaction(ctx context.Context, id int64,
 	if err = lockScopedAdminAccount(txctx, tx, id); err != nil {
 		return nil, err
 	}
-	if _, err = tx.Client().ExecContext(txctx, "SELECT id FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", id); err != nil {
+	// 方言门：两条行锁语句本身双方言一致，只有位置参数占位符不同（PG "$1"、MySQL "?"）。
+	ph := "$1"
+	if tx.Client().Driver().Dialect() == dialect.MySQL {
+		ph = "?"
+	}
+	if _, err = tx.Client().ExecContext(txctx, "SELECT id FROM accounts WHERE id = "+ph+" AND deleted_at IS NULL FOR UPDATE", id); err != nil {
 		return nil, err
 	}
-	if _, err = tx.Client().ExecContext(txctx, "SELECT account_id FROM account_groups WHERE account_id = $1 FOR UPDATE", id); err != nil {
+	if _, err = tx.Client().ExecContext(txctx, "SELECT account_id FROM account_groups WHERE account_id = "+ph+" FOR UPDATE", id); err != nil {
 		return nil, err
 	}
 	result, err := run(txctx)

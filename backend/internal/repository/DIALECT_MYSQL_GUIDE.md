@@ -43,6 +43,11 @@ MySQL 无可写 CTE → 用 `sqlAtomicScope` 拆成多条语句：
 - `pg_advisory_lock/try_advisory_lock/unlock(hashtext('name'))` → `GET_LOCK('name', <timeout秒>)` / `RELEASE_LOCK('name')`，
   仍用 `db.Conn(ctx)` 独立连接持有（GET_LOCK 是连接级锁）。`SELECT GET_LOCK(?, 0)` 返回 1/0。
   参考实现：`migrations_runner.go` 的 `mysqlGetLock`。进程内哈希锁（`user_profile_identity_repo.go` advisoryLockHash 模式）可直接复用。
+- `pg_advisory_xact_lock(...)`（事务级，随提交/回滚自动释放）→ 拿得到 `*ent.Tx` 时用 `internal/util/txlock.Acquire(ctx, tx, name)`：
+  在同一连接上 `GET_LOCK`，并挂 ent 的 OnCommit/OnRollback 钩子在事务真正结束前 `RELEASE_LOCK`
+  （MySQL 命名锁不随事务释放，且**同一连接重复取同名锁按次数累计**，一次 Acquire 配一次释放）。等待有界 30s，超时报错。
+  拿不到事务对象时退化为进程内键锁（见 `user_profile_identity_repo.go` / `auth_pending_identity_service.go`）。
+  参考实现：`custom_account_proxy_selection.go`、`service/custom_admin_key_transaction.go`。
 
 ## jsonb → JSON 函数映射
 
@@ -61,6 +66,7 @@ MySQL 无可写 CTE → 用 `sqlAtomicScope` 拆成多条语句：
 | `jsonb_array_elements(x)` 展开行 | `JSON_TABLE(x, '$[*]' COLUMNS (v <type> PATH '$'))` |
 | `jsonb_agg(... ORDER BY ...)` | `JSON_ARRAYAGG`（无序！需排序时先在派生表里 ORDER BY 再聚合） |
 | `jsonb_build_object(...)` | `JSON_OBJECT(...)` |
+| `trim_scale(((col->>'k')::double precision)::text::numeric)::text`（数值展开指数、去尾零） | `TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST(CAST(JSON_UNQUOTE(JSON_EXTRACT(col,'$.k')) AS DOUBLE) AS DECIMAL(65,30))))`（逐值一致：`1.0→1`、`1e7→10000000`、18 位整数按 float64 精度展开） |
 | `'[]'::json` / `'{}'::json` | `CAST('[]' AS JSON)` / `CAST('{}' AS JSON)` |
 
 ## 日期/时间
@@ -83,6 +89,11 @@ MySQL 无可写 CTE → 用 `sqlAtomicScope` 拆成多条语句：
 - `IS DISTINCT FROM` → `<=>` 取反：`NOT (a <=> b)`；`IS NOT DISTINCT FROM` → `a <=> b`。
 - `split_part(s, ',', n)` → `SUBSTRING_INDEX(SUBSTRING_INDEX(s, ',', n), ',', -1)`。
 - `btrim(x)` / `trim(x)` → `TRIM(x)`。
+- `btrim(x, '<字符集合>')`（按集合裁剪首尾）→ `REGEXP_REPLACE(x, '^<集合>+|<集合>+$', '')`；
+  集合里的非 ASCII 空白写成 ICU 码点 `\\x{00A0}`（SQL 字面量里已吃掉一层反斜杠）。
+  参考实现：`custom_admin_key_scope.go` 的 `mysqlScopedCredentialField`。
+- `RANDOM()` / `random()` → `RAND()`（`randomOrderExpr()` 双方言取值；
+  `ORDER BY RAND()` 与 `ORDER BY random()` 一样会阻止 filesort 下推，只用于小结果集）。
 - `COALESCE/GREATEST/LEAST`：MySQL 的 GREATEST/LEAST 遇 NULL 返回 NULL（PG 忽略 NULL），必要时 `GREATEST(COALESCE(a,0), ...)`。
 - `FILTER (WHERE cond)` 聚合 → `SUM(CASE WHEN cond THEN 1 ELSE 0 END)`（或对应聚合列 `SUM(CASE WHEN cond THEN col ELSE 0 END)`）。
 - `GROUPING SETS` → `UNION ALL` 展开各组（或 `WITH ROLLUP`，语义需核对）。
@@ -105,6 +116,10 @@ MySQL 无可写 CTE → 用 `sqlAtomicScope` 拆成多条语句：
 
 ## 特殊注意
 
+- **`RowsAffected` 口径不同**：DSN 未开 `clientFoundRows`，MySQL 只统计「值真正发生变化」的行，
+  同值重放（未改动的编辑提交、同一毫秒内的重复 Touch）会得到 0，而 PG 命中即算 1 行。
+  凡是「affected==0 ⇒ 记录不存在/冲突」的判定都必须用同一 WHERE 回查存在性。
+  参考实现：`custom_admin_keys.go` 的 `scopedAdminKeyUpdateMySQL`、`account_repo.go` 的存在性回查、`group_repo.go`。
 - **`groups` 是 MySQL 8 保留字**：MySQL 分支的 SQL 里该表名/列引用必须反引号 `` `groups` ``（PG 分支不用）。
 - `key`、`rank`、`rows`、`system`、`lateral` 同理（出现时反引号）。
 - `usage_logs` 在 MySQL 是普通表（无分区）：分区相关函数（`isUsageLogsPartitioned` 等）MySQL 分支直接返回 false/no-op。
