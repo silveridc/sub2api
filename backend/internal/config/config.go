@@ -238,6 +238,40 @@ type UpdateConfig struct {
 	// 支持 http/https/socks5/socks5h 协议
 	// 例如: "http://127.0.0.1:7890", "socks5://127.0.0.1:1080"
 	ProxyURL string `mapstructure:"proxy_url"`
+	// Repo 是在线更新的 release 来源仓库，格式 "owner/name"。
+	// 空串使用二进制内置默认仓库（本 fork 默认为 silveridc/sub2api）。
+	// Env: UPDATE_REPO
+	Repo string `mapstructure:"repo"`
+}
+
+// NormalizeUpdateRepo 校验并归一 "owner/name" 形式的 release 仓库。
+// 空串合法，表示沿用内置默认仓库。
+func NormalizeUpdateRepo(repo string) (string, error) {
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return "", nil
+	}
+	owner, name, found := strings.Cut(repo, "/")
+	if !found || !isGitHubRepoSegment(owner) || !isGitHubRepoSegment(name) || strings.Contains(name, "/") {
+		return "", fmt.Errorf("must be a GitHub repository in \"owner/name\" form, got %q", repo)
+	}
+	return owner + "/" + name, nil
+}
+
+// isGitHubRepoSegment 按 GitHub 对仓库/用户名允许字符的限制校验单个路径段。
+func isGitHubRepoSegment(segment string) bool {
+	if segment == "" || len(segment) > 100 {
+		return false
+	}
+	for i, r := range segment {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '.':
+		case r == '_' && i > 0: // GitHub 不允许下划线开头
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 type IdempotencyConfig struct {
@@ -2881,6 +2915,7 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
 	viper.SetDefault("update.proxy_url", "")
+	viper.SetDefault("update.repo", "")
 
 	// sticky_escape_enabled is the one exception to the zero-value rule: its
 	// effective default is true, applied post-unmarshal via a viper.IsSet guard.
@@ -2955,6 +2990,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("security.proxy_probe.urls: %w", err)
 	}
 	c.Security.ProxyProbe.URLs = proxyProbeURLs
+	updateRepo, err := NormalizeUpdateRepo(c.Update.Repo)
+	if err != nil {
+		return fmt.Errorf("update.repo: %w", err)
+	}
+	c.Update.Repo = updateRepo
 	if c.Plugins.MaxUploadBytes <= 0 || c.Plugins.MaxUploadBytes > 1024*1024*1024 {
 		return fmt.Errorf("plugins.max_upload_bytes must be between 1 and 1073741824")
 	}

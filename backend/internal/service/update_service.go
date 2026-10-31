@@ -30,7 +30,9 @@ var (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "Wei-Shaw/sub2api"
+	// 本 fork 的在线更新默认从自己的 release 仓库取包（MySQL 版产物由本仓库 CI 发布）；
+	// update.repo / UPDATE_REPO 可覆盖，填 Wei-Shaw/sub2api 即回到上游。
+	githubRepo = "silveridc/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -65,16 +67,31 @@ type UpdateService struct {
 	githubClient   GitHubReleaseClient
 	currentVersion string
 	buildType      string // "source" for manual builds, "release" for CI builds
+	repo           string // release 来源仓库 "owner/name"，空串表示使用 githubRepo 默认值
 }
 
 // NewUpdateService creates a new UpdateService
 func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string) *UpdateService {
+	return NewUpdateServiceWithRepo(cache, githubClient, version, buildType, "")
+}
+
+// NewUpdateServiceWithRepo 允许指定 release 来源仓库（"owner/name"）；空串使用 githubRepo 默认值。
+func NewUpdateServiceWithRepo(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType, repo string) *UpdateService {
 	return &UpdateService{
 		cache:          cache,
 		githubClient:   githubClient,
 		currentVersion: version,
 		buildType:      buildType,
+		repo:           strings.TrimSpace(repo),
 	}
+}
+
+// releaseRepo 返回当前生效的 release 来源仓库。
+func (s *UpdateService) releaseRepo() string {
+	if s.repo != "" {
+		return s.repo
+	}
+	return githubRepo
 }
 
 // UpdateInfo contains update information
@@ -363,7 +380,7 @@ func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) e
 // fetchRollbackCandidates fetches recent releases and keeps the newest
 // maxRollbackVersions entries strictly older than the current version.
 func (s *UpdateService) fetchRollbackCandidates(ctx context.Context) ([]*GitHubRelease, error) {
-	releases, err := s.githubClient.FetchRecentReleases(ctx, githubRepo, rollbackFetchPageSize)
+	releases, err := s.githubClient.FetchRecentReleases(ctx, s.releaseRepo(), rollbackFetchPageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +417,7 @@ func (s *UpdateService) fetchRollbackCandidates(ctx context.Context) ([]*GitHubR
 }
 
 func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, error) {
-	release, err := s.githubClient.FetchLatestRelease(ctx, githubRepo)
+	release, err := s.githubClient.FetchLatestRelease(ctx, s.releaseRepo())
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +667,57 @@ func compareVersions(current, latest string) int {
 			return 1
 		}
 	}
-	return 0
+	// 数字段完全相同才比较 - 后缀。本 fork 的补丁发布复用上游版本号
+	// （0.2.19-mysql → 0.2.19-mysql.2），只看数字会让同版本热修复永远不被识别为更新。
+	// 只有一方带后缀时按相同处理：上游官方版本号不带后缀，两者不该互相压制。
+	currentSuffix, latestSuffix := versionSuffix(current), versionSuffix(latest)
+	if currentSuffix == "" || latestSuffix == "" {
+		return 0
+	}
+	return compareVersionSuffix(currentSuffix, latestSuffix)
+}
+
+// versionSuffix 返回版本号中第一个 '-' 之后的部分（不含 '-'），无后缀时为空串。
+func versionSuffix(v string) string {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if idx := strings.IndexByte(v, '-'); idx != -1 {
+		return v[idx+1:]
+	}
+	return ""
+}
+
+// compareVersionSuffix 逐段比较两个后缀：数字段按数值，其余按字典序；
+// 前面各段都相同时，段数多的更新（"mysql" < "mysql.2"）。
+func compareVersionSuffix(current, latest string) int {
+	currentParts := strings.Split(current, ".")
+	latestParts := strings.Split(latest, ".")
+	for i := 0; i < len(currentParts) && i < len(latestParts); i++ {
+		currentNum, currentErr := strconv.Atoi(currentParts[i])
+		latestNum, latestErr := strconv.Atoi(latestParts[i])
+		if currentErr == nil && latestErr == nil {
+			if currentNum != latestNum {
+				if currentNum < latestNum {
+					return -1
+				}
+				return 1
+			}
+			continue
+		}
+		if currentParts[i] != latestParts[i] {
+			if currentParts[i] < latestParts[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	switch {
+	case len(currentParts) < len(latestParts):
+		return -1
+	case len(currentParts) > len(latestParts):
+		return 1
+	default:
+		return 0
+	}
 }
 
 func parseVersion(v string) [3]int {

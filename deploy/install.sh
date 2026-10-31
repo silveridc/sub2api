@@ -31,7 +31,8 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-GITHUB_REPO="Wei-Shaw/sub2api"
+# Release 来源仓库：默认本 fork（MySQL 版产物只在这里），SUB2API_GITHUB_REPO=Wei-Shaw/sub2api 可切回上游
+GITHUB_REPO="${SUB2API_GITHUB_REPO:-silveridc/sub2api}"
 INSTALL_DIR="/opt/sub2api"
 SERVICE_NAME="sub2api"
 SERVICE_USER="sub2api"

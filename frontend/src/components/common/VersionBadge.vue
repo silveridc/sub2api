@@ -651,9 +651,10 @@ import {
 import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
 
-const GITHUB_REPO = 'Wei-Shaw/sub2api'
-// Docker Hub image published by CI (tags carry no "v" prefix, e.g. weishaw/sub2api:0.1.146)
-const DOCKER_IMAGE = 'weishaw/sub2api'
+// MySQL 版发布仓库：与后端 update_service.go 的 githubRepo 默认值保持一致
+const GITHUB_REPO = 'silveridc/sub2api'
+// CI 只推 GHCR（fork 无 Docker Hub 命名空间），tag 不带 "v" 前缀，如 ghcr.io/silveridc/sub2api:0.2.19-mysql
+const DOCKER_IMAGE = 'ghcr.io/silveridc/sub2api'
 
 const { t } = useI18n()
 

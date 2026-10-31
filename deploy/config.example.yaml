@@ -1301,6 +1301,15 @@ update:
   # 留空表示直连（适用于海外服务器）
   proxy_url: ""
 
+  # Release source repository for in-app updates, "owner/name".
+  # 在线更新读取的 release 来源仓库，格式 "owner/name"。
+  # Empty uses the repository baked into this build (silveridc/sub2api).
+  # 留空则使用本构建内置的仓库（silveridc/sub2api，即 MySQL 版发布仓库）。
+  # Set Wei-Shaw/sub2api to track upstream releases instead.
+  # 设为 Wei-Shaw/sub2api 可改回跟踪上游官方 release。
+  # Env: UPDATE_REPO
+  repo: ""
+
 # =============================================================================
 # Image Storage (异步图片任务结果对象存储)
 # =============================================================================
