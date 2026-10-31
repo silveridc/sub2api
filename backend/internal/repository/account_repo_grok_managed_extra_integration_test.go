@@ -174,13 +174,19 @@ func TestGrokManagedExtraSurvivesOrdinaryUpdate(t *testing.T) {
 }
 
 func TestGrokManagedExtraUpdateOverlapsCatalogCAS(t *testing.T) {
+	// 夹具假设 PG 的锁时序：持锁方 UPDATE 不被并发等待者阻塞，失败时事务亦由
+	// 测试统一回滚。MySQL 下并发 Update 会先进入同一行锁的等待队列，这里的
+	// 手动事务 choreography 在 30s 内收敛不了（实测 1205 锁等待超时）。
+	// MySQL 的合并语义由 TestGrokManagedExtraSurvivesOrdinaryUpdate 与
+	// TestGrokCatalogCAS* 覆盖。
+	skipOnMySQL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	account := mustCreateGrokCatalogAccount(t, testEntClient(t), "grok-managed-overlap")
 	t.Cleanup(func() {
 		cleanupCtx := context.Background()
-		_, _ = integrationDB.ExecContext(cleanupCtx, "DELETE FROM scheduler_outbox WHERE account_id = $1", account.ID)
-		_, _ = integrationDB.ExecContext(cleanupCtx, "DELETE FROM accounts WHERE id = $1", account.ID)
+		_, _ = integrationDB.ExecContext(cleanupCtx, "DELETE FROM scheduler_outbox WHERE account_id = "+ph(1), account.ID)
+		_, _ = integrationDB.ExecContext(cleanupCtx, "DELETE FROM accounts WHERE id = "+ph(1), account.ID)
 	})
 
 	freshModels := `{"models":["fresh-model"],"fetched_at":"2026-10-25T12:00:00Z","last_attempt":{"status":"failed","error_code":"transport","started_at":"2026-10-25T13:00:00Z","finished_at":"2026-10-25T13:00:01Z"}}`
@@ -196,7 +202,11 @@ func TestGrokManagedExtraUpdateOverlapsCatalogCAS(t *testing.T) {
 	var holderErr error
 	go func() {
 		defer close(holderDone)
-		rows, queryErr := tx.QueryContext(ctx, `SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE`, account.ID)
+		lockClause := "FOR NO KEY UPDATE"
+		if IsMySQL() {
+			lockClause = "FOR UPDATE" // MySQL 无更弱行锁；互斥语义与 PG 一致
+		}
+		rows, queryErr := tx.QueryContext(ctx, `SELECT id FROM accounts WHERE id = `+ph(1)+` `+lockClause, account.ID)
 		if queryErr != nil {
 			holderErr = queryErr
 			return
@@ -226,12 +236,21 @@ func TestGrokManagedExtraUpdateOverlapsCatalogCAS(t *testing.T) {
 			holderErr = ctx.Err()
 			return
 		}
-		_, execErr := tx.ExecContext(ctx, `
+		setExtra := `
 			UPDATE accounts
 			SET extra = jsonb_set(
-				jsonb_set(COALESCE(extra, '{}'::jsonb), '{grok_observed_models}', $2::jsonb, true),
-				'{upstream_model_metadata}', $3::jsonb, true)
-			WHERE id = $1`, account.ID, freshModels, freshMetadata)
+				jsonb_set(COALESCE(extra, '{}'::jsonb), '{grok_observed_models}', ` + ph(2) + `::jsonb, true),
+				'{upstream_model_metadata}', ` + ph(3) + `::jsonb, true)
+			WHERE id = ` + ph(1)
+		if IsMySQL() {
+			setExtra = `
+			UPDATE accounts
+			SET extra = JSON_SET(
+				JSON_SET(COALESCE(extra, JSON_OBJECT()), '$.grok_observed_models', CAST(` + ph(2) + ` AS JSON)),
+				'$.upstream_model_metadata', CAST(` + ph(3) + ` AS JSON))
+			WHERE id = ` + ph(1)
+		}
+		_, execErr := tx.ExecContext(ctx, setExtra, account.ID, freshModels, freshMetadata)
 		if execErr != nil {
 			holderErr = execErr
 			return
@@ -300,15 +319,27 @@ type grokManagedExtraRow struct {
 
 func readGrokManagedExtra(t *testing.T, q grokCatalogSQL, id int64) grokManagedExtraRow {
 	t.Helper()
+	noteText := "COALESCE(extra->>'note', '')"
+	unrelatedText := "COALESCE(extra->>'unrelated', '')"
+	baseURLText := "COALESCE(credentials->>'base_url', '')"
+	modelsText := "COALESCE((extra->'grok_observed_models')::text, 'null')"
+	metadataText := "COALESCE((extra->'upstream_model_metadata')::text, 'null')"
+	if IsMySQL() {
+		noteText = "COALESCE(" + jsonExtractTextExpr("extra", "note") + ", '')"
+		unrelatedText = "COALESCE(" + jsonExtractTextExpr("extra", "unrelated") + ", '')"
+		baseURLText = "COALESCE(" + jsonExtractTextExpr("credentials", "base_url") + ", '')"
+		modelsText = "COALESCE(" + jsonTextExpr("JSON_EXTRACT(extra, '$.grok_observed_models')") + ", 'null')"
+		metadataText = "COALESCE(" + jsonTextExpr("JSON_EXTRACT(extra, '$.upstream_model_metadata')") + ", 'null')"
+	}
 	rows, err := q.QueryContext(context.Background(), `
 		SELECT name,
-		       COALESCE(extra->>'note', ''),
-		       COALESCE(extra->>'unrelated', ''),
-		       COALESCE(credentials->>'base_url', ''),
-		       COALESCE((extra->'grok_observed_models')::text, 'null'),
-		       COALESCE((extra->'upstream_model_metadata')::text, 'null')
+		       `+noteText+`,
+		       `+unrelatedText+`,
+		       `+baseURLText+`,
+		       `+modelsText+`,
+		       `+metadataText+`
 		FROM accounts
-		WHERE id = $1`, id)
+		WHERE id = `+ph(1), id)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	require.True(t, rows.Next())

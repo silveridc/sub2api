@@ -77,7 +77,11 @@ func TestGrokCatalogCASTreatsNullMissingAndKeyOrderAsSameValue(t *testing.T) {
 		tx := testEntTx(t)
 		repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
 		account := mustCreateGrokCatalogAccount(t, tx.Client(), "grok-cas-json-null")
-		_, err := tx.ExecContext(ctx, `UPDATE accounts SET extra = jsonb_set(extra, '{grok_observed_models}', 'null'::jsonb, true) WHERE id = $1`, account.ID)
+		setNullJSON := "jsonb_set(extra, '{grok_observed_models}', 'null'::jsonb, true)"
+		if IsMySQL() {
+			setNullJSON = "JSON_SET(extra, '$.grok_observed_models', CAST('null' AS JSON))"
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE accounts SET extra = `+setNullJSON+` WHERE id = `+ph(1), account.ID)
 		require.NoError(t, err)
 		applied, err := repo.CompareAndSwapGrokObservedModels(ctx, account.ID, nil, json.RawMessage(`{"models":["from-json-null"]}`))
 		require.NoError(t, err)
@@ -88,6 +92,7 @@ func TestGrokCatalogCASTreatsNullMissingAndKeyOrderAsSameValue(t *testing.T) {
 	})
 
 	t.Run("sql null", func(t *testing.T) {
+		skipOnMySQL(t) // MySQL 的 ALTER TABLE 会隐式提交，事务内临时放开 NOT NULL 并回滚的前提不成立
 		tx := testEntTx(t)
 		repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
 		account := mustCreateGrokCatalogAccount(t, tx.Client(), "grok-cas-sql-null")
@@ -95,7 +100,7 @@ func TestGrokCatalogCASTreatsNullMissingAndKeyOrderAsSameValue(t *testing.T) {
 		// transaction so the COALESCE(extra, '{}') branch is actually executed.
 		_, err := tx.ExecContext(ctx, `ALTER TABLE accounts ALTER COLUMN extra DROP NOT NULL`)
 		require.NoError(t, err)
-		_, err = tx.ExecContext(ctx, `UPDATE accounts SET extra = NULL WHERE id = $1`, account.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE accounts SET extra = NULL WHERE id = `+ph(1), account.ID)
 		require.NoError(t, err)
 		applied, err := repo.CompareAndSwapGrokObservedModels(ctx, account.ID, json.RawMessage(" \t"), json.RawMessage(`{"models":["from-sql-null"]}`))
 		require.NoError(t, err)
@@ -132,7 +137,7 @@ func TestGrokCatalogCASDoesNotUpdateSoftDeletedOrOtherPlatform(t *testing.T) {
 	nextJSON := json.RawMessage(`{"models":["should-not-land"]}`)
 
 	deleted := mustCreateGrokCatalogAccount(t, tx.Client(), "grok-cas-deleted")
-	_, err := tx.ExecContext(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1`, deleted.ID)
+	_, err := tx.ExecContext(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = `+ph(1), deleted.ID)
 	require.NoError(t, err)
 	applied, err := repo.CompareAndSwapGrokObservedModels(ctx, deleted.ID, nil, nextJSON)
 	require.NoError(t, err)
@@ -164,8 +169,8 @@ func TestGrokCatalogCASConcurrentIndependentTransactionsMergeSuccess(t *testing.
 	account := mustCreateGrokCatalogAccount(t, testEntClient(t), "grok-cas-concurrent")
 	t.Cleanup(func() {
 		cleanupCtx := context.Background()
-		_, _ = integrationDB.ExecContext(cleanupCtx, "DELETE FROM scheduler_outbox WHERE account_id = $1", account.ID)
-		_, _ = integrationDB.ExecContext(cleanupCtx, "DELETE FROM accounts WHERE id = $1", account.ID)
+		_, _ = integrationDB.ExecContext(cleanupCtx, "DELETE FROM scheduler_outbox WHERE account_id = "+ph(1), account.ID)
+		_, _ = integrationDB.ExecContext(cleanupCtx, "DELETE FROM accounts WHERE id = "+ph(1), account.ID)
 	})
 
 	tx1, err := integrationEntClient.Tx(ctx)
@@ -276,15 +281,25 @@ type grokCatalogRow struct {
 
 func readGrokCatalogRow(t *testing.T, q grokCatalogSQL, id int64) grokCatalogRow {
 	t.Helper()
+	unrelatedText := "COALESCE(extra->>'unrelated', '')"
+	modelsText := "COALESCE((extra->'grok_observed_models')::text, 'null')"
+	tokenText := "COALESCE(credentials->>'access_token', '')"
+	rateText := "rate_multiplier::text"
+	if IsMySQL() {
+		unrelatedText = "COALESCE(" + jsonExtractTextExpr("extra", "unrelated") + ", '')"
+		modelsText = "COALESCE(" + jsonTextExpr("JSON_EXTRACT(extra, '$.grok_observed_models')") + ", 'null')"
+		tokenText = "COALESCE(" + jsonExtractTextExpr("credentials", "access_token") + ", '')"
+		rateText = "CAST(rate_multiplier AS CHAR)"
+	}
 	rows, err := q.QueryContext(context.Background(), `
-		SELECT COALESCE(extra->>'unrelated', ''),
-		       COALESCE((extra->'grok_observed_models')::text, 'null'),
-		       COALESCE(credentials->>'access_token', ''),
+		SELECT `+unrelatedText+`,
+		       `+modelsText+`,
+		       `+tokenText+`,
 		       status,
-		       rate_multiplier::text,
+		       `+rateText+`,
 		       deleted_at IS NOT NULL
 		FROM accounts
-		WHERE id = $1`, id)
+		WHERE id = `+ph(1), id)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	require.True(t, rows.Next())
@@ -315,7 +330,7 @@ func readGrokCatalogRow(t *testing.T, q grokCatalogSQL, id int64) grokCatalogRow
 
 func grokCatalogOutboxCount(t *testing.T, q grokCatalogSQL, id int64) int {
 	t.Helper()
-	rows, err := q.QueryContext(context.Background(), `SELECT COUNT(*) FROM scheduler_outbox WHERE account_id = $1`, id)
+	rows, err := q.QueryContext(context.Background(), `SELECT COUNT(*) FROM scheduler_outbox WHERE account_id = `+ph(1), id)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	require.True(t, rows.Next())
@@ -327,7 +342,11 @@ func grokCatalogOutboxCount(t *testing.T, q grokCatalogSQL, id int64) int {
 
 func grokCatalogBackendPID(t *testing.T, q grokCatalogSQL) int {
 	t.Helper()
-	rows, err := q.QueryContext(context.Background(), `SELECT pg_backend_pid()`)
+	pidExpr := "pg_backend_pid()"
+	if IsMySQL() {
+		pidExpr = "CONNECTION_ID()"
+	}
+	rows, err := q.QueryContext(context.Background(), `SELECT `+pidExpr)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	require.True(t, rows.Next())

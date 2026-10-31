@@ -205,7 +205,10 @@ func runMySQLHarness(ctx context.Context, m *testing.M) int {
 	}
 	// 测试统一 UTC（与 postgres 路径 TimeZone=UTC 对齐）。
 	cfg.Loc = time.UTC
-	cfg.Params = map[string]string{"time_zone": "'+00:00'"}
+	cfg.Params = map[string]string{
+		"time_zone":             "'+00:00'",
+		"transaction_isolation": "'READ-COMMITTED'",
+	}
 
 	integrationDB, err = sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {

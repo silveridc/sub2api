@@ -1717,6 +1717,11 @@ func (d *DatabaseConfig) MySQLConfig(tz string) (*mysql.Config, error) {
 		Collation:            "utf8mb4_0900_ai_ci",
 		Params: map[string]string{
 			"time_zone": "'" + mysqlSessionTimeZone(loc) + "'",
+			// PostgreSQL 默认 READ COMMITTED，MySQL 默认 REPEATABLE READ。
+			// 业务代码按 PG 语义编写（事务内冲突重试要读到其他事务已提交的新值，
+			// 见 service.PersistGrokCatalogObservation 的 CAS 重试），这里对齐到
+			// READ COMMITTED，避免 MySQL 上重试一直看到旧快照。
+			"transaction_isolation": "'READ-COMMITTED'",
 		},
 		// TLS：sslmode 字段在 MySQL 下按 MySQL 语义解释（见 MySQLTLSMode）。
 		TLSConfig: d.MySQLTLSMode(),

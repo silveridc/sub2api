@@ -37,7 +37,7 @@ func newMCPOAuthIntegrationFixture(t *testing.T, ctx context.Context) mcpOAuthIn
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, err := integrationDB.ExecContext(cleanupCtx, `DELETE FROM users WHERE id=$1`, user.ID)
+		_, err := integrationDB.ExecContext(cleanupCtx, `DELETE FROM users WHERE id=`+ph(1), user.ID)
 		require.NoError(t, err)
 	})
 
@@ -183,7 +183,7 @@ func TestMCPOAuthIntegrationConcurrentCodeExchange(t *testing.T) {
 	require.NotNil(t, issued)
 	var credentialCount int
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM mcp_oauth_credentials WHERE grant_id=$1`, f.grantID).Scan(&credentialCount))
+		`SELECT COUNT(*) FROM mcp_oauth_credentials WHERE grant_id=`+ph(1), f.grantID).Scan(&credentialCount))
 	require.Equal(t, 2, credentialCount, "losing transactions must not persist extra access or refresh tokens")
 	grant, err := f.repo.GetGrant(ctx, f.grantID)
 	require.NoError(t, err)
@@ -241,7 +241,12 @@ func TestMCPOAuthIntegrationClientIDKeyConvergesAcrossInstances(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// Start without a key so the instances race to create it.
-	_, err := integrationDB.ExecContext(ctx, `DELETE FROM security_secrets WHERE key=$1`, mcpOAuthClientIDKeyName)
+	// MySQL 里 key 是保留字，需要反引号；PG 用双引号与不加引号等价。
+	keyColumn := `"key"`
+	if IsMySQL() {
+		keyColumn = "`key`"
+	}
+	_, err := integrationDB.ExecContext(ctx, `DELETE FROM security_secrets WHERE `+keyColumn+`=`+ph(1), mcpOAuthClientIDKeyName)
 	require.NoError(t, err)
 	const instances = 8
 	keys := make([][]byte, instances)

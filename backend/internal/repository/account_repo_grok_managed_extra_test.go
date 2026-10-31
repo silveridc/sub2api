@@ -15,6 +15,7 @@ import (
 )
 
 func TestLockAndMergeAccountProbeExtraKeepsLatestGrokManagedKeys(t *testing.T) {
+	skipOnMySQL(t) // sqlmock 断言 PG 锁定读语句形状（FOR NO KEY UPDATE 等），MySQL 分支语句不同
 	freshModels := []byte(`{"fetched_at":"2026-10-25T12:00:00Z","models":["fresh-model"]}`)
 	freshMetadata := []byte(`{"models":{"fresh-model":{"id":"fresh-model"}}}`)
 	failedModels := []byte(`{"fetched_at":"2026-10-25T12:00:00Z","last_attempt":{"error_code":"transport","finished_at":"2026-10-25T13:00:01Z","started_at":"2026-10-25T13:00:00Z","status":"failed"},"models":["fresh-model"]}`)

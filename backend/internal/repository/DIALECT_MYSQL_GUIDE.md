@@ -116,6 +116,9 @@ MySQL 无可写 CTE → 用 `sqlAtomicScope` 拆成多条语句：
 
 ## 特殊注意
 
+- **事务隔离级别**：MySQL 连接统一 `transaction_isolation='READ-COMMITTED'`（`config.MySQLConfig` 的 DSN 参数），
+  对齐 PG 的默认级别。依赖「事务内冲突重试能读到其他事务已提交的新值」的代码（如
+  `service.PersistGrokCatalogObservation` 的 CAS 重试）在 MySQL 默认 REPEATABLE READ 下会一直读到旧快照而失败。
 - **`RowsAffected` 口径不同**：DSN 未开 `clientFoundRows`，MySQL 只统计「值真正发生变化」的行，
   同值重放（未改动的编辑提交、同一毫秒内的重复 Touch）会得到 0，而 PG 命中即算 1 行。
   凡是「affected==0 ⇒ 记录不存在/冲突」的判定都必须用同一 WHERE 回查存在性。
@@ -127,7 +130,10 @@ MySQL 无可写 CTE → 用 `sqlAtomicScope` 拆成多条语句：
   MySQL 分支读写用 `encoding/json` 序列化成 JSON 字符串参数 / Scan 到 `[]byte` 后反序列化。
 - `RETURNING` 全部消除后，PG 分支里的 `scanBalanceChange` 等共享 helper 保持原样。
 - DECIMAL 列扫描到 float64：`database/sql` 自动转换（[]byte→float64），无需特殊处理。
-- 改完必须 `gofmt -w` 且 `go build ./...` 通过；不要改 *_test.go。
+- 改完必须 `gofmt -w` 且 `go build ./...` 通过。
+- 上游新增的测试夹具若写死 PG 语句，可在测试里双方言化：占位符用 `ph(n)`，JSON 取值用
+  `jsonTextExpr` / `jsonExtractTextExpr`，锁子句/DDL 用 `IsMySQL()` 分支；sqlmock 断言 PG 语句形状、
+  或依赖 PG 锁时序的夹具直接用 `skipOnMySQL(t)` 跳过。**PG 分支必须产出与原文一致的字符串。**
 - 保留 PG 分支原字符串不变（包括注释），MySQL 分支自建常量/字符串。
 
 ## 已完成的参考实现

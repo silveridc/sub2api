@@ -4631,7 +4631,9 @@ func lockAndMergeAccountProbeExtraMySQLQuery(account *service.Account, credentia
 				FALSE
 			),
 			JSON_EXTRACT(extra, '$.opencode_go_usage_auto_refresh'),
-			JSON_EXTRACT(extra, '$.opencode_go_usage_snapshot')
+			JSON_EXTRACT(extra, '$.opencode_go_usage_snapshot'),
+			JSON_EXTRACT(extra, '$.grok_observed_models'),
+			JSON_EXTRACT(extra, '$.upstream_model_metadata')
 		FROM accounts
 		WHERE id = ? AND deleted_at IS NULL
 		FOR UPDATE
