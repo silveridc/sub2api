@@ -39,6 +39,11 @@ jobs:
       - name: Unit tests
         working-directory: backend
         run: make test-unit
+      - name: MySQL migration parity
+        working-directory: backend
+        # 无需数据库：钉住 mysql/ 迁移与 PostgreSQL 迁移一一对应，上游新增迁移忘了
+        # 翻译镜像文件时在这里失败，而不是让 MySQL 实例启动时报 Unknown column。
+        run: go test ./migrations/
       - name: Integration tests
         working-directory: backend
         run: make test-integration

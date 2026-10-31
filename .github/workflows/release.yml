@@ -3,7 +3,9 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      # fork 发布通道：只自动发布带 -mysql 后缀的 tag（v0.2.19-mysql / v0.2.19-mysql.2）。
+      # 上游同名 tag（v0.2.19 等）即使被推回本仓库也不会在这里发出缺 MySQL 方言的产物。
+      - 'v*-mysql*'
   workflow_dispatch:
     inputs:
       tag:
@@ -60,6 +62,20 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r "$RUNNER_TEMP/release-tools/requirements-release.txt"
+      - name: Guard fork release tag
+        env:
+          REQUESTED_REF: ${{ inputs.tag || github.ref_name }}
+        run: |
+          # 真正的发布必须走 -mysql 后缀 tag：本仓库的产物含 MySQL 方言，
+          # 与上游 vX.Y.Z 二进制不等价，误发会覆盖同版本号并误导在线更新。
+          if [[ "$DRY_RUN" == true ]]; then
+            echo "dry run, skipping tag guard"
+            exit 0
+          fi
+          if [[ ! "$REQUESTED_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-mysql([.-][0-9A-Za-z]+)*$ ]]; then
+            echo "::error::release tag must look like v<X.Y.Z>-mysql[.N] (got '$REQUESTED_REF')"
+            exit 1
+          fi
       - name: Resolve one source commit and target matrix
         id: plan
         env:
@@ -377,7 +393,10 @@ jobs:
 
   sync-version-file:
     needs: [prepare, release]
-    if: ${{ needs.release.result == 'success' && needs.prepare.outputs.dry_run != 'true' }}
+    # fork 默认关闭：backend/cmd/server/VERSION 要跟上游保持一致，否则每次 pull 上游都冲突。
+    # 版本号本来就以 tag 为准（prepare 会把它写进 version-file 产物并注入二进制），
+    # 若确实需要回写仓库文件，在仓库 Variables 里设置 SYNC_VERSION_FILE=true。
+    if: ${{ needs.release.result == 'success' && needs.prepare.outputs.dry_run != 'true' && vars.SYNC_VERSION_FILE == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
