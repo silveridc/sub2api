@@ -139,6 +139,11 @@ linters:
       - path: '_test\.go$'
         linters: [ gosec ]
         text: 'G70[34]'
+      # mysql_test_helpers_test.go 刻意不带 build 标签（skipOnMySQL 需被无标签的
+      # sqlmock 测试引用）；其余 helper 只在 integration / integration_mysql 形态下
+      # 被调用，lint 不带标签编译时必然报 unused，故按路径豁免该文件的 unused。
+      - path: 'internal/repository/mysql_test_helpers_test\.go$'
+        linters: [ unused ]
 
 formatters:
   enable:

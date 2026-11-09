@@ -985,19 +985,19 @@ func cleanupUsageBillingDedupBatchOnMySQL(ctx context.Context, q sqlQueryer, exe
 	}
 
 	var insert strings.Builder
-	insert.WriteString(`
+	_, _ = insert.WriteString(`
 		INSERT INTO usage_billing_dedup_archive (request_id, api_key_id, request_fingerprint, created_at)
 		VALUES
 	`)
 	args := make([]any, 0, len(victims)*4)
 	for i, victim := range victims {
 		if i > 0 {
-			insert.WriteString(",")
+			_, _ = insert.WriteString(",")
 		}
-		insert.WriteString("(?, ?, ?, ?)")
+		_, _ = insert.WriteString("(?, ?, ?, ?)")
 		args = append(args, victim.requestID, victim.apiKeyID, victim.requestFingerprint, victim.createdAt)
 	}
-	insert.WriteString(`
+	_, _ = insert.WriteString(`
 		ON DUPLICATE KEY UPDATE
 			request_id = usage_billing_dedup_archive.request_id,
 			api_key_id = usage_billing_dedup_archive.api_key_id

@@ -501,22 +501,22 @@ func upsertUserGroupRatesMySQL(ctx context.Context, sqlq sqlExecutor, setColumn 
 		return nil
 	}
 	var query strings.Builder
-	query.WriteString("INSERT INTO user_group_rate_multipliers (user_id, group_id, ")
-	query.WriteString(setColumn)
-	query.WriteString(", created_at, updated_at) VALUES ")
+	_, _ = query.WriteString("INSERT INTO user_group_rate_multipliers (user_id, group_id, ")
+	_, _ = query.WriteString(setColumn)
+	_, _ = query.WriteString(", created_at, updated_at) VALUES ")
 	args := make([]any, 0, len(rows)*5)
 	for i, row := range rows {
 		if i > 0 {
-			query.WriteString(",")
+			_, _ = query.WriteString(",")
 		}
-		query.WriteString("(?, ?, ?, ?, ?)")
+		_, _ = query.WriteString("(?, ?, ?, ?, ?)")
 		args = append(args, row[0], row[1], row[2], row[3], row[4])
 	}
-	query.WriteString(" AS new_rows ON DUPLICATE KEY UPDATE ")
-	query.WriteString(setColumn)
-	query.WriteString(" = new_rows.")
-	query.WriteString(setColumn)
-	query.WriteString(", updated_at = new_rows.updated_at")
+	_, _ = query.WriteString(" AS new_rows ON DUPLICATE KEY UPDATE ")
+	_, _ = query.WriteString(setColumn)
+	_, _ = query.WriteString(" = new_rows.")
+	_, _ = query.WriteString(setColumn)
+	_, _ = query.WriteString(", updated_at = new_rows.updated_at")
 	_, err := sqlq.ExecContext(ctx, query.String(), args...)
 	return err
 }

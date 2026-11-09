@@ -16,8 +16,6 @@ import (
 	"entgo.io/ent/dialect"
 
 	"github.com/Wei-Shaw/sub2api/migrations"
-
-	"github.com/go-sql-driver/mysql"
 )
 
 // schemaMigrationsTableDDL 定义迁移记录表的 DDL（PostgreSQL 方言）。
@@ -384,12 +382,6 @@ func applyMigrationsFSWithDialect(ctx context.Context, db *sql.DB, fsys fs.FS, d
 // MySQL 测试库上跳过 CREATE TRIGGER（错误 1419）完成迁移引导。生产恒为 false。
 var mysqlTriggerFailureTolerant bool
 
-// isMySQLTriggerCreateFailure 判断错误是否为 binlog 环境下缺少触发器创建权限（1419）。
-func isMySQLTriggerCreateFailure(err error) bool {
-	var mysqlErr *mysql.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1419
-}
-
 // stripMySQLTriggerDDL 从迁移内容中剥除 CREATE TRIGGER 语句块。
 // 触发器体为 BEGIN...END（体内含分号与 END IF）；本项目的触发器无嵌套
 // BEGIN 块，因此从 CREATE TRIGGER 起删到首个「后随词不是 IF 的 END」加上
@@ -400,15 +392,15 @@ func stripMySQLTriggerDDL(content string) string {
 	for i < len(content) {
 		rel := indexWord(content[i:], "CREATE", "TRIGGER")
 		if rel < 0 {
-			out.WriteString(content[i:])
+			_, _ = out.WriteString(content[i:])
 			break
 		}
 		start := i + rel
-		out.WriteString(content[i:start])
+		_, _ = out.WriteString(content[i:start])
 		end := endOfTriggerStatement(content[start:])
 		if end < 0 {
 			// 找不到终止符：保守保留原文。
-			out.WriteString(content[start:])
+			_, _ = out.WriteString(content[start:])
 			break
 		}
 		i = start + end
@@ -483,7 +475,7 @@ func wordBoundary(s string, i int) bool {
 		return true
 	}
 	c := s[i]
-	return !(c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z')
+	return c != '_' && (c < '0' || c > '9') && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z')
 }
 
 func nextWordIs(s string, i int, word string) bool {

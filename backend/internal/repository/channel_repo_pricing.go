@@ -282,13 +282,13 @@ func setGroupIDsTxMySQL(ctx context.Context, exec dbExec, channelID int64, group
 		return nil
 	}
 	var sb strings.Builder
-	sb.WriteString(`INSERT INTO channel_groups (channel_id, group_id) VALUES `)
+	_, _ = sb.WriteString(`INSERT INTO channel_groups (channel_id, group_id) VALUES `)
 	args := make([]any, 0, len(groupIDs)*2)
 	for i, gid := range groupIDs {
 		if i > 0 {
-			sb.WriteString(",")
+			_, _ = sb.WriteString(",")
 		}
-		sb.WriteString("(?,?)")
+		_, _ = sb.WriteString("(?,?)")
 		args = append(args, channelID, gid)
 	}
 	if _, err := exec.ExecContext(ctx, sb.String(), args...); err != nil {

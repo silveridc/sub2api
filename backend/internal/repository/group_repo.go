@@ -1675,16 +1675,16 @@ func (r *groupRepository) getAccountIDsByGroupIDsMySQL(ctx context.Context, grou
 // 本调用方也不消费受影响行数）。
 func bindAccountsToGroupMySQL(ctx context.Context, exec sqlExecutor, groupID int64, accountIDs []int64) error {
 	var query strings.Builder
-	query.WriteString("INSERT INTO account_groups (account_id, group_id, priority, created_at) VALUES ")
+	_, _ = query.WriteString("INSERT INTO account_groups (account_id, group_id, priority, created_at) VALUES ")
 	args := make([]any, 0, len(accountIDs)*2)
 	for i, accountID := range accountIDs {
 		if i > 0 {
-			query.WriteString(",")
+			_, _ = query.WriteString(",")
 		}
-		query.WriteString("(?, ?, 50, NOW(3))")
+		_, _ = query.WriteString("(?, ?, 50, NOW(3))")
 		args = append(args, accountID, groupID)
 	}
-	query.WriteString(" ON DUPLICATE KEY UPDATE account_id = account_id")
+	_, _ = query.WriteString(" ON DUPLICATE KEY UPDATE account_id = account_id")
 	_, err := exec.ExecContext(ctx, query.String(), args...)
 	return err
 }
@@ -1735,15 +1735,15 @@ func (r *groupRepository) updateSortOrdersMySQL(ctx context.Context, groupIDs []
 	}
 
 	var update strings.Builder
-	update.WriteString("UPDATE `groups` SET sort_order = CASE")
+	_, _ = update.WriteString("UPDATE `groups` SET sort_order = CASE")
 	updateArgs := make([]any, 0, len(groupIDs)*3)
 	for _, id := range groupIDs {
-		update.WriteString(" WHEN id = ? THEN ?")
+		_, _ = update.WriteString(" WHEN id = ? THEN ?")
 		updateArgs = append(updateArgs, id, sortOrderByID[id])
 	}
-	update.WriteString(" ELSE sort_order END WHERE deleted_at IS NULL AND id IN (")
-	update.WriteString(Placeholders(len(groupIDs)))
-	update.WriteString(")")
+	_, _ = update.WriteString(" ELSE sort_order END WHERE deleted_at IS NULL AND id IN (")
+	_, _ = update.WriteString(Placeholders(len(groupIDs)))
+	_, _ = update.WriteString(")")
 	updateArgs = append(updateArgs, int64Args(groupIDs)...)
 
 	result, err := r.sql.ExecContext(ctx, update.String(), updateArgs...)

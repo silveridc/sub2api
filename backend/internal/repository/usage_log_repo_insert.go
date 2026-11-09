@@ -1113,9 +1113,9 @@ func selectUsageLogBatchStatesMySQL(ctx context.Context, db *sql.DB, keys []stri
 			continue
 		}
 		if cond.Len() > 0 {
-			cond.WriteString(" OR ")
+			_, _ = cond.WriteString(" OR ")
 		}
-		cond.WriteString("(request_id = ? AND api_key_id = ?)")
+		_, _ = cond.WriteString("(request_id = ? AND api_key_id = ?)")
 		args = append(args, requestID, apiKeyID)
 	}
 	if cond.Len() == 0 {
@@ -1161,18 +1161,18 @@ func splitUsageLogBatchKey(key string) (string, int64, bool) {
 // execUsageLogBatchInsertMySQL 执行多行幂等插入（ON DUPLICATE KEY UPDATE id = id）。
 func execUsageLogBatchInsertMySQL(ctx context.Context, db *sql.DB, keys []string, preparedByKey map[string]usageLogInsertPrepared) error {
 	var query strings.Builder
-	query.WriteString("INSERT INTO usage_logs (")
-	query.WriteString(usageLogInsertColumnList)
-	query.WriteString(") VALUES ")
+	_, _ = query.WriteString("INSERT INTO usage_logs (")
+	_, _ = query.WriteString(usageLogInsertColumnList)
+	_, _ = query.WriteString(") VALUES ")
 	args := make([]any, 0, len(keys)*len(usageLogInsertArgTypes))
 	for i, key := range keys {
 		if i > 0 {
-			query.WriteString(",")
+			_, _ = query.WriteString(",")
 		}
-		query.WriteString(usageLogInsertTuplePlaceholder)
+		_, _ = query.WriteString(usageLogInsertTuplePlaceholder)
 		args = append(args, preparedByKey[key].args...)
 	}
-	query.WriteString(" ON DUPLICATE KEY UPDATE id = id")
+	_, _ = query.WriteString(" ON DUPLICATE KEY UPDATE id = id")
 	_, err := db.ExecContext(ctx, query.String(), args...)
 	return err
 }
@@ -1411,18 +1411,18 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 // 多行 VALUES + ON DUPLICATE KEY UPDATE id = id，一次性幂等写入，无需返回状态。
 func buildUsageLogBestEffortInsertQueryMySQL(preparedList []usageLogInsertPrepared) (string, []any) {
 	var query strings.Builder
-	query.WriteString("INSERT INTO usage_logs (")
-	query.WriteString(usageLogInsertColumnList)
-	query.WriteString(") VALUES ")
+	_, _ = query.WriteString("INSERT INTO usage_logs (")
+	_, _ = query.WriteString(usageLogInsertColumnList)
+	_, _ = query.WriteString(") VALUES ")
 	args := make([]any, 0, len(preparedList)*len(usageLogInsertArgTypes))
 	for i, prepared := range preparedList {
 		if i > 0 {
-			query.WriteString(",")
+			_, _ = query.WriteString(",")
 		}
-		query.WriteString(usageLogInsertTuplePlaceholder)
+		_, _ = query.WriteString(usageLogInsertTuplePlaceholder)
 		args = append(args, prepared.args...)
 	}
-	query.WriteString(" ON DUPLICATE KEY UPDATE id = id")
+	_, _ = query.WriteString(" ON DUPLICATE KEY UPDATE id = id")
 	return query.String(), args
 }
 
